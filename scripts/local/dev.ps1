@@ -88,6 +88,32 @@ $FrontendDir = Join-Path $Root "frontend"
 Start-ServiceWindow -Title "Frontend :8081" -WorkDir $FrontendDir -Command "`$env:BROWSER='none'; npx expo start --web"
 Write-Host "      Fenetre Frontend ouverte." -ForegroundColor Green
 
+# --- Mobile (telephone physique via USB) ---
+$devices = adb devices 2>$null | Select-String "device$"
+if ($devices) {
+    Write-Host "      Telephone detecte en USB, configuration adb reverse..." -ForegroundColor Yellow
+    Write-Host "      Attente du demarrage de Metro..." -ForegroundColor DarkGray
+    $metroTimeout = 60
+    $metroElapsed = 0
+    $metroOk = $false
+    while (-not $metroOk -and $metroElapsed -lt $metroTimeout) {
+        Start-Sleep -Seconds 2
+        $metroElapsed += 2
+        try { $metroResp = Invoke-WebRequest -Uri "http://127.0.0.1:8081/status" -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue; $metroOk = $metroResp.StatusCode -eq 200 } catch { $metroOk = $false }
+    }
+    if ($metroOk) {
+        adb reverse tcp:8081 tcp:8081
+        adb reverse tcp:8000 tcp:8000
+        Write-Host "      Ports 8081 et 8000 forwardes via USB." -ForegroundColor Green
+        adb shell am start -a android.intent.action.VIEW -d "exp://localhost:8081" host.exp.exponent | Out-Null
+        Write-Host "      Expo Go ouvert sur le telephone." -ForegroundColor Green
+    } else {
+        Write-Host "      Metro non pret apres ${metroTimeout}s, adb reverse ignore." -ForegroundColor Red
+    }
+} else {
+    Write-Host "      Aucun telephone detecte en USB, etape mobile ignoree." -ForegroundColor DarkGray
+}
+
 # --- Frontend Admin Vite ---
 Write-Host "[4/4] Frontend Admin Vite..." -ForegroundColor Yellow
 $AdminDir = Join-Path $Root "frontend-admin"
