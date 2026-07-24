@@ -6,7 +6,7 @@ module.exports = {
   expo: {
     name: isStaging ? "Bibliothèque STAGING" : "Bibliothèque",
     slug: "bibliotheque", // Identifiant unique pour Expo
-    version: "1.0.7", // Version de l'application
+    version: "1.0.8", // Version de l'application
     orientation: "portrait", // Orientation par défaut
     icon: isStaging ? "./assets/icon-staging.png" : "./assets/icon.png",
     splash: {

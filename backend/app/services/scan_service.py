@@ -1,66 +1,22 @@
-from typing import List
-from sqlmodel import Session, SQLModel
-from app.clients.google_books import fetch_google_books
-from app.clients.openlibrary import fetch_openlibrary
+import asyncio
+from sqlmodel import Session
+from app.clients.google_books import fetch_google_books, search_google_books_by_title
+from app.clients.openlibrary import fetch_openlibrary, search_openlibrary_by_title
 from app.repositories.book_repository import BookRepository
 from app.repositories.author_repository import AuthorRepository
 from app.repositories.publisher_repository import PublisherRepository
 from app.repositories.loan_repository import LoanRepository
 from app.repositories.borrowed_book_repository import BorrowedBookRepository
-from app.schemas.book_schemas import BookCreate, BookRead, CurrentLoanRead
-from app.schemas.author_schemas import AuthorRead
-from app.schemas.publisher_schemas import PublisherRead
+from app.schemas.book_schemas import BookRead, CurrentLoanRead
 from app.schemas.borrowed_book_schemas import BorrowedBookRead
-
-
-class SuggestedAuthor(SQLModel):
-    """Auteur suggéré avec information d'existence"""
-    name: str
-    exists: bool = False
-    id: int | None = None
-
-class SuggestedPublisher(SQLModel):
-    """Éditeur suggéré avec information d'existence"""
-    name: str
-    exists: bool = False
-    id: int | None = None
-
-class SuggestedGenre(SQLModel):
-    """Genre suggéré avec information d'existence"""
-    name: str
-    exists: bool = False
-    id: int | None = None
-
-class SuggestedBook(SQLModel):
-    """Modèle pour le livre suggéré dans le scan - avec entités enrichies"""
-    isbn: str | None = None
-    title: str | None = None
-    subtitle: str | None = None
-    published_date: str | None = None
-    page_count: int | None = None
-    barcode: str | None = None
-    cover_url: str | None = None
-    authors: List[SuggestedAuthor] = []
-    publisher: SuggestedPublisher | None = None
-    genres: List[SuggestedGenre] = []
-
-
-class ScanResult(SQLModel):
-    base : BookRead | None = None
-    suggested : SuggestedBook | None = None
-    title_match : List[BookRead] = []
-    google_book : dict | None= None
-    openlibrary : dict | None= None
-
-    # Erreurs des services externes
-    google_book_error: str | None = None
-    openlibrary_error: str | None = None
-
-    # Flags et données pour emprunts
-    previously_borrowed: bool = False        # Tous emprunts sont RETURNED
-    currently_borrowed: bool = False         # Au moins un emprunt ACTIVE/OVERDUE
-    borrowed_book: BorrowedBookRead | None = None  # Détails emprunt actif
-    can_add_to_library: bool = False         # Peut ajouter en possession permanente
+from app.schemas.scan_schemas import (
+    ScanResult,
+    SuggestedAuthor,
+    SuggestedPublisher,
+    SuggestedGenre,
+    SuggestedBook,
+    TitleSearchResult,
+)
 
 
 class ScanService:
@@ -133,12 +89,12 @@ class ScanService:
                 barcode=base_book.barcode,
                 cover_url=base_book.cover_url,
                 authors=[
-                    SuggestedAuthor(name=author.name, exists=True, id=author.id) 
+                    SuggestedAuthor(name=author.name, exists=True, id=author.id)
                     for author in base_book.authors
                 ] if base_book.authors else [],
                 publisher=SuggestedPublisher(
-                    name=base_book.publisher.name, 
-                    exists=True, 
+                    name=base_book.publisher.name,
+                    exists=True,
                     id=base_book.publisher.id
                 ) if base_book.publisher else None,
                 genres=[
@@ -184,10 +140,10 @@ class ScanService:
                                 id=None
                             ))
                             print(f"🆕 Nouvel auteur détecté: '{api_author_name}'")
-            
+
             # Récupération du nom de l'éditeur depuis les APIs
             api_publisher_name = google_publisher or openlibrary_publisher
-            
+
             # Vérification si l'éditeur existe déjà dans la base de données pour cet utilisateur
             final_publisher = None
             if api_publisher_name:
@@ -227,5 +183,92 @@ class ScanService:
 
             if result.suggested and result.suggested.title:
                 result.title_match = self.book_repository.search_title_match(title=result.suggested.title, isbn=isbn, user_id=self.user_id)
+
+        return result
+
+    def _enrich_authors(self, author_names: list[str]) -> list[SuggestedAuthor]:
+        """Vérifie l'existence en base de chaque auteur et retourne la liste enrichie"""
+        authors_list = []
+        for api_author_name in author_names:
+            existing_author = self.author_repository.get_by_name(api_author_name)
+            if existing_author:
+                authors_list.append(SuggestedAuthor(name=existing_author.name, exists=True, id=existing_author.id))
+            else:
+                authors_list.append(SuggestedAuthor(name=api_author_name, exists=False, id=None))
+        return authors_list
+
+    def _enrich_publisher(self, publisher_name: str | None) -> SuggestedPublisher | None:
+        """Vérifie l'existence en base de l'éditeur et retourne l'objet enrichi"""
+        if not publisher_name:
+            return None
+        existing_publisher = self.publisher_repository.get_by_name(publisher_name)
+        if existing_publisher:
+            return SuggestedPublisher(name=existing_publisher.name, exists=True, id=existing_publisher.id)
+        return SuggestedPublisher(name=publisher_name, exists=False, id=None)
+
+    def _google_item_to_suggested_book(self, item: dict) -> SuggestedBook:
+        """Convertit un volumeInfo Google Books brut en SuggestedBook enrichi"""
+        cover_url = item.get("imageLinks", {}).get("thumbnail")
+        if cover_url and cover_url.startswith('http://'):
+            cover_url = cover_url.replace('http://', 'https://', 1)
+
+        isbn = None
+        for identifier in item.get("industryIdentifiers", []) or []:
+            if identifier.get("type") in ("ISBN_13", "ISBN_10"):
+                isbn = identifier.get("identifier")
+                break
+
+        return SuggestedBook(
+            isbn=isbn,
+            title=item.get("title"),
+            subtitle=item.get("subtitle"),
+            published_date=item.get("publishedDate"),
+            page_count=item.get("pageCount"),
+            barcode=isbn,
+            cover_url=cover_url,
+            authors=self._enrich_authors(item.get("authors") or []),
+            publisher=self._enrich_publisher(item.get("publisher")),
+            genres=[],
+        )
+
+    def _openlibrary_doc_to_suggested_book(self, doc: dict) -> SuggestedBook:
+        """Convertit un document de recherche OpenLibrary brut en SuggestedBook enrichi"""
+        cover_i = doc.get("cover_i")
+        cover_url = f"https://covers.openlibrary.org/b/id/{cover_i}-M.jpg" if cover_i else None
+
+        isbn_list = doc.get("isbn") or []
+        isbn = isbn_list[0] if isbn_list else None
+
+        published_date = doc.get("first_publish_year")
+        published_date = str(published_date) if published_date else None
+
+        return SuggestedBook(
+            isbn=isbn,
+            title=doc.get("title"),
+            subtitle=doc.get("subtitle"),
+            published_date=published_date,
+            page_count=None,
+            barcode=isbn,
+            cover_url=cover_url,
+            authors=self._enrich_authors(doc.get("author_name") or []),
+            publisher=None,
+            genres=[],
+        )
+
+    async def search_by_title(self, title: str, max_results: int = 8) -> TitleSearchResult:
+        """Recherche des livres par titre auprès de Google Books et OpenLibrary"""
+
+        result = TitleSearchResult()
+
+        (google_items, google_error), (openlibrary_docs, openlibrary_error) = await asyncio.gather(
+            search_google_books_by_title(title, max_results),
+            search_openlibrary_by_title(title, max_results),
+        )
+
+        result.google_error = google_error
+        result.openlibrary_error = openlibrary_error
+        result.google_results = [self._google_item_to_suggested_book(item) for item in (google_items or [])]
+        result.openlibrary_results = [self._openlibrary_doc_to_suggested_book(doc) for doc in (openlibrary_docs or [])]
+        result.title_match = self.book_repository.search_title_match(title=title, isbn="", user_id=self.user_id)
 
         return result

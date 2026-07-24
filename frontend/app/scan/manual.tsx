@@ -4,6 +4,7 @@ import { View, ScrollView, StyleSheet, Text, Alert, Platform, TouchableOpacity, 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BookForm } from "@/components/scan/BookForm";
+import { TitleSearchSection } from "@/components/scan/TitleSearchSection";
 import { BookCreate, SuggestedBook } from "@/types/scanTypes";
 import { bookService } from "@/services/bookService";
 import { MaterialIcons } from '@expo/vector-icons';
@@ -24,6 +25,9 @@ export default function ManualBookAddPage() {
 
   // Parser le livre suggéré si fourni
   const [parsedSuggestedBook, setParsedSuggestedBook] = useState<SuggestedBook | null>(null);
+  // Livre choisi via la recherche par titre (prioritaire sur parsedSuggestedBook)
+  const [searchSelectedBook, setSearchSelectedBook] = useState<SuggestedBook | null>(null);
+  const [searchFeedback, setSearchFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (suggestedBookParam) {
@@ -34,6 +38,12 @@ export default function ManualBookAddPage() {
       }
     }
   }, [suggestedBookParam]);
+
+  const handleSelectSearchResult = (book: SuggestedBook) => {
+    setSearchSelectedBook(book);
+    setSearchFeedback(`Données importées : "${book.title || 'livre sélectionné'}"`);
+    setTimeout(() => setSearchFeedback(null), 3000);
+  };
 
   // Protection centralisée
   // Données vides pour le formulaire d'ajout manuel
@@ -172,9 +182,22 @@ export default function ManualBookAddPage() {
             </Text>
           </View>
 
+          {/* Recherche par titre (Google Books / OpenLibrary) */}
+          <TitleSearchSection
+            onSelectResult={handleSelectSearchResult}
+            currentFormData={searchSelectedBook || parsedSuggestedBook || emptyBookData}
+          />
+
+          {searchFeedback && (
+            <View style={[styles.feedbackBanner, { backgroundColor: theme.successBg, borderColor: theme.success }]}>
+              <MaterialIcons name="check-circle" size={18} color={theme.success} />
+              <Text style={[styles.feedbackText, { color: theme.success }]}>{searchFeedback}</Text>
+            </View>
+          )}
+
           {/* Formulaire d'ajout manuel */}
           <BookForm
-            initialData={parsedSuggestedBook || emptyBookData}
+            initialData={searchSelectedBook || parsedSuggestedBook || emptyBookData}
             onSubmit={handleSubmit}
             submitButtonText={isSubmitting ? "Ajout en cours..." : "Ajouter le livre"}
             submitButtonLoadingText="Ajout en cours..."
@@ -253,6 +276,21 @@ const styles = StyleSheet.create({
   instructionsText: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  feedbackBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  feedbackText: {
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
   },
   authContainer: {
     flex: 1,

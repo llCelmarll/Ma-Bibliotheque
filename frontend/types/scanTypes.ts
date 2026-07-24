@@ -137,6 +137,14 @@ export interface ScanResult {
 	can_add_to_library?: boolean;       // Peut ajouter en possession
 }
 
+export interface TitleSearchResult {
+	google_results: SuggestedBook[];
+	openlibrary_results: SuggestedBook[];
+	google_error?: string;
+	openlibrary_error?: string;
+	title_match: BookRead[];
+}
+
 export interface AuthorRead {
 	id: number;
 	name: string;

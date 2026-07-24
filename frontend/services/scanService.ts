@@ -1,6 +1,6 @@
 // services/api/scanApi.ts
 import axios from 'axios';
-import {BookRead, BookCreate, ScanResult} from "@/types/scanTypes";
+import {BookRead, BookCreate, ScanResult, TitleSearchResult} from "@/types/scanTypes";
 import API_CONFIG from '@/config/api';
 import { setupAuthInterceptor } from '@/services/api/authInterceptor';
 
@@ -38,6 +38,22 @@ export const scanApi = {
 				throw new Error(`Erreur lors du scan: ${message}`);
 			}
 			throw new Error('Erreur lors de la récupération des données du scan');
+		}
+	},
+
+	async searchByTitle(title: string): Promise<TitleSearchResult> {
+		try {
+			const response = await apiClient.get(`${API_CONFIG.ENDPOINTS.SCAN}/search`, {
+				params: { title },
+			});
+			return response.data;
+		} catch (error) {
+			console.error('❌ Erreur API recherche par titre:', error);
+			if (axios.isAxiosError(error)) {
+				const message = error.response?.data?.detail || error.message;
+				throw new Error(`Erreur lors de la recherche: ${message}`);
+			}
+			throw new Error('Erreur lors de la recherche par titre');
 		}
 	},
 };

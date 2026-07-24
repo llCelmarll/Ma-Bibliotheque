@@ -17,7 +17,8 @@ from app.models.user_model import User
 from app.repositories.book_repository import BookRepository
 from app.schemas.book_schemas import BookCreate, BookUpdate, BookSearchParams
 from app.services.book_service import BookService
-from app.services.scan_service import ScanService, SuggestedBook
+from app.services.scan_service import ScanService
+from app.schemas.scan_schemas import SuggestedBook
 from tests.conftest import create_test_book
 
 

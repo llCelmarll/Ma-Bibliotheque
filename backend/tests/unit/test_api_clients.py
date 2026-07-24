@@ -6,8 +6,8 @@ import os
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 import httpx
-from app.clients.google_books import fetch_google_books
-from app.clients.openlibrary import fetch_openlibrary
+from app.clients.google_books import fetch_google_books, search_google_books_by_title
+from app.clients.openlibrary import fetch_openlibrary, search_openlibrary_by_title
 
 
 @pytest.mark.unit
@@ -126,7 +126,100 @@ class TestGoogleBooksClient:
 
 
 @pytest.mark.unit
-@pytest.mark.scan  
+@pytest.mark.scan
+class TestGoogleBooksTitleSearch:
+    """Tests pour la recherche par titre via Google Books API."""
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_success_multiple_results(self, mock_get: AsyncMock):
+        """Test de recherche par titre avec plusieurs résultats."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "items": [
+                {"volumeInfo": {"title": "Clean Code", "authors": ["Robert C. Martin"]}},
+                {"volumeInfo": {"title": "Clean Code in Python", "authors": ["Mariano Anaya"]}},
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        items, error = await search_google_books_by_title("Clean Code")
+
+        assert error is None
+        assert len(items) == 2
+        assert items[0]["title"] == "Clean Code"
+        assert items[1]["title"] == "Clean Code in Python"
+
+        call_args = mock_get.call_args
+        assert "intitle:Clean Code" in str(call_args)
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_no_results(self, mock_get: AsyncMock):
+        """Test de recherche par titre sans résultat — retourne une liste vide, pas None."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"items": []}
+        mock_get.return_value = mock_response
+
+        items, error = await search_google_books_by_title("Titre Introuvable Zzz")
+
+        assert error is None
+        assert items == []
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_http_error_non_retryable(self, mock_get: AsyncMock):
+        """Test d'une erreur HTTP non-retryable (4xx hors 429)."""
+        mock_response = AsyncMock()
+        mock_response.status_code = 400
+        mock_get.return_value = mock_response
+
+        items, error = await search_google_books_by_title("Clean Code")
+
+        assert items is None
+        assert error is not None
+        assert "erreur 400" in error
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    @patch('asyncio.sleep', new_callable=AsyncMock)
+    async def test_search_retries_then_succeeds(self, mock_sleep: AsyncMock, mock_get: AsyncMock):
+        """Test qu'un 503 suivi d'un succès est bien retenté avant de retourner des résultats."""
+        error_response = Mock()
+        error_response.status_code = 503
+
+        success_response = Mock()
+        success_response.status_code = 200
+        success_response.json.return_value = {
+            "items": [{"volumeInfo": {"title": "Clean Code"}}]
+        }
+
+        mock_get.side_effect = [error_response, success_response]
+
+        items, error = await search_google_books_by_title("Clean Code")
+
+        assert error is None
+        assert len(items) == 1
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_timeout(self, mock_get: AsyncMock):
+        """Test du timeout lors d'une recherche par titre."""
+        mock_get.side_effect = httpx.ConnectTimeout("Connection timeout")
+
+        items, error = await search_google_books_by_title("Clean Code")
+
+        assert items is None
+        assert error is not None
+        assert "indisponible" in error
+
+
+@pytest.mark.unit
+@pytest.mark.scan
 class TestOpenLibraryClient:
     """Tests pour le client OpenLibrary API."""
     
@@ -234,6 +327,78 @@ class TestOpenLibraryClient:
         assert error is None
         assert data["title"] == "Minimal Book"
         # Les autres champs peuvent être absents, c'est OK
+
+
+@pytest.mark.unit
+@pytest.mark.scan
+class TestOpenLibraryTitleSearch:
+    """Tests pour la recherche par titre via OpenLibrary."""
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_success_multiple_results(self, mock_get: AsyncMock):
+        """Test de recherche par titre avec plusieurs résultats."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "numFound": 2,
+            "docs": [
+                {"title": "Clean Code", "author_name": ["Robert C. Martin"], "first_publish_year": 2008},
+                {"title": "Clean Code in Python", "author_name": ["Mariano Anaya"], "first_publish_year": 2018},
+            ],
+        }
+        mock_get.return_value = mock_response
+
+        docs, error = await search_openlibrary_by_title("Clean Code")
+
+        assert error is None
+        assert len(docs) == 2
+        assert docs[0]["title"] == "Clean Code"
+
+        call_args = mock_get.call_args
+        assert "/search.json" in str(call_args)
+        assert "/isbn/" not in str(call_args)
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_no_results(self, mock_get: AsyncMock):
+        """Test de recherche par titre sans résultat — retourne une liste vide, pas None."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"numFound": 0, "docs": []}
+        mock_get.return_value = mock_response
+
+        docs, error = await search_openlibrary_by_title("Titre Introuvable Zzz")
+
+        assert error is None
+        assert docs == []
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_server_error(self, mock_get: AsyncMock):
+        """Test d'une erreur serveur OpenLibrary — pas de retry, échec direct."""
+        mock_response = AsyncMock()
+        mock_response.status_code = 500
+        mock_get.return_value = mock_response
+
+        docs, error = await search_openlibrary_by_title("Clean Code")
+
+        assert docs is None
+        assert error is not None
+        assert "erreur 500" in error
+        assert mock_get.call_count == 1
+
+    @pytest.mark.asyncio
+    @patch('httpx.AsyncClient.get')
+    async def test_search_timeout(self, mock_get: AsyncMock):
+        """Test du timeout lors d'une recherche par titre."""
+        mock_get.side_effect = httpx.ReadTimeout("Read timeout")
+
+        docs, error = await search_openlibrary_by_title("Clean Code")
+
+        assert docs is None
+        assert error is not None
+        assert "indisponible" in error
 
 
 @pytest.mark.live

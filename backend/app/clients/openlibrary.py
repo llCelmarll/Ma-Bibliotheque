@@ -40,3 +40,27 @@ async def fetch_openlibrary(isbn: str) -> tuple[dict | None, str | None]:
     except httpx.RequestError as e:
         print(f"Erreur OpenLibrary pour ISBN {isbn}: {e}")
         return None, "OpenLibrary est temporairement indisponible (erreur réseau)"
+
+
+async def search_openlibrary_by_title(title: str, limit: int = 8) -> tuple[list[dict] | None, str | None]:
+    """Recherche des livres via OpenLibrary par titre.
+
+    Returns:
+        tuple: (docs, error) — docs est la liste des résultats trouvés (vide si aucun
+        résultat), error est un message d'erreur ou None.
+    """
+    url = f"{BASE_URL}/search.json"
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            response = await client.get(url, params={"title": title, "limit": limit})
+            if response.status_code != 200:
+                print(f"Erreur OpenLibrary pour titre '{title}': HTTP {response.status_code}")
+                return None, f"OpenLibrary est temporairement indisponible (erreur {response.status_code})"
+            data = response.json()
+            return data.get("docs") or [], None
+    except (httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+        print(f"Erreur OpenLibrary pour titre '{title}': {e}")
+        return None, "OpenLibrary est temporairement indisponible (délai d'attente dépassé)"
+    except httpx.RequestError as e:
+        print(f"Erreur OpenLibrary pour titre '{title}': {e}")
+        return None, "OpenLibrary est temporairement indisponible (erreur réseau)"
