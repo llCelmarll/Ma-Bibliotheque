@@ -1,5 +1,12 @@
 [
     {
+        "version": "1.6.0",
+        "date": "2026-07-24",
+        "title": "Recherche de livre par titre",
+        "description": "Pas d'ISBN sous la main ? Depuis l'ajout manuel, vous pouvez désormais rechercher un livre par son titre sur Google Books et OpenLibrary. Choisissez un résultat pour pré-remplir le formulaire, champ par champ (titre, auteurs, éditeur, date, couverture...), et combinez si besoin des informations provenant de plusieurs résultats. Un avertissement s'affiche si un livre au titre similaire est déjà dans votre bibliothèque.",
+        "type": "feature"
+    },
+    {
         "version": "1.5.0",
         "date": "2026-07-23",
         "title": "Export de vos données et améliorations d'accessibilité",
